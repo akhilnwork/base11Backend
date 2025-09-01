@@ -53,7 +53,7 @@
                 </div>
                 <div class="bg-white relative lg:-ml-px -mb-px lg:mb-0 rounded-t-lg lg:rounded-t-none lg:rounded-r-lg aspect-[335/376] lg:aspect-auto w-full lg:w-[438px] shrink-0 overflow-hidden">
                  
-                    
+
                     {{-- Light Mode 12 SVG --}}
                     <svg class="w-[448px] max-w-none relative -mt-[4.9rem]  z-0 -ml-8 lg:ml-0 lg:-mt-[6.6rem]" viewBox="0 0 440 376" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <g class="transition-all delay-300 translate-y-0 opacity-100 duration-750 starting:opacity-0 starting:translate-y-4">
@@ -130,7 +130,7 @@
                             Log in
                         </a>
 
-                    </div>
+                </div>
          
                     
                     

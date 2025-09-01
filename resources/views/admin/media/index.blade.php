@@ -4,9 +4,27 @@
 
 @push('styles')
 <style>
+    .media-item {
+        position: relative;
+    }
+    
     .media-item:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    
+    .media-item:hover .delete-media {
+        opacity: 1 !important;
+    }
+    
+    .delete-media {
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .delete-media:hover {
+        transform: scale(1.1);
+        background-color: #dc2626 !important;
     }
     
     .conversion-status {
@@ -114,7 +132,7 @@
         @if($media->count() > 0)
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 p-6" id="mediaGrid">
                 @foreach($media as $item)
-                    <div class="w-full max-w-[200px] bg-white border border-gray-200 rounded-lg overflow-hidden transition-all duration-200 ease-in-out" data-media-id="{{ $item->id }}">
+                    <div class="media-item group w-full max-w-[200px] bg-white border border-gray-200 rounded-lg overflow-hidden transition-all duration-200 ease-in-out" data-media-id="{{ $item->id }}">
                         <div class="aspect-w-1 aspect-h-1 bg-gray-200 relative">
                             @if(str_starts_with($item->mime_type, 'image/'))
                                 <img src="{{ $item->hasGeneratedConversion('thumb') ? $item->getUrl('thumb') : $item->getUrl() }}" 
@@ -135,8 +153,8 @@
                             </div>
                             
                             <!-- Actions -->
-                            <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button class="delete-media bg-red-600 text-white p-1 rounded hover:bg-red-700" data-media-id="{{ $item->id }}">
+                            <div class="absolute top-2 right-2 opacity-100 transition-opacity z-10">
+                                <button class="delete-media bg-red-600 text-white p-1 rounded hover:bg-red-700 transition-colors" data-media-id="{{ $item->id }}" title="Delete this file">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                     </svg>
@@ -250,7 +268,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('{{ route("admin.media.upload") }}', {
             method: 'POST',
             headers: {
-                'X-CSRF-TOKEN': window.Laravel.csrfToken
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
             body: formData
         })
@@ -333,20 +351,39 @@ document.addEventListener('DOMContentLoaded', function() {
         const selected = Array.from(document.querySelectorAll('.media-checkbox:checked'));
         if (selected.length === 0) return;
 
-        if (confirm(`Are you sure you want to delete ${selected.length} file(s)?`)) {
+                if (confirm(`Are you sure you want to delete ${selected.length} file(s)?`)) {
             const mediaIds = selected.map(cb => cb.value);
+            
+            // Get CSRF token
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            if (!csrfToken) {
+                console.error('CSRF token not found');
+                alert('Security token not found. Please refresh the page.');
+                return;
+            }
+            
+            // Show loading state
+            const button = this;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Deleting...';
             
             fetch('{{ route("admin.media.batch-delete") }}', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': window.Laravel.csrfToken
+                    'X-CSRF-TOKEN': csrfToken
                 },
                 body: JSON.stringify({
                     media_ids: mediaIds
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.success) {
                     location.reload();
@@ -356,7 +393,12 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(error => {
                 console.error('Delete error:', error);
-                alert('Delete failed');
+                alert('Delete failed: ' + error.message);
+            })
+            .finally(() => {
+                // Restore button state
+                button.disabled = false;
+                button.textContent = originalText;
             });
         }
     });
@@ -367,24 +409,67 @@ document.addEventListener('DOMContentLoaded', function() {
             e.stopPropagation();
             const mediaId = this.dataset.mediaId;
             
+            console.log('Delete button clicked for media ID:', mediaId);
+            
             if (confirm('Are you sure you want to delete this file?')) {
+                // Get CSRF token
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                if (!csrfToken) {
+                    console.error('CSRF token not found');
+                    alert('Security token not found. Please refresh the page.');
+                    return;
+                }
+                
+                // Show loading state
+                const button = this;
+                const originalHTML = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = `
+                    <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                `;
+                
+                console.log('Sending delete request for media ID:', mediaId);
+                
                 fetch(`/admin/media/${mediaId}`, {
                     method: 'DELETE',
                     headers: {
-                        'X-CSRF-TOKEN': window.Laravel.csrfToken
+                        'X-CSRF-TOKEN': csrfToken
                     }
                 })
-                .then(response => response.json())
+                .then(response => {
+                    console.log('Delete response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('Delete response data:', data);
                     if (data.success) {
-                        this.closest('.media-item').remove();
+                        const mediaItem = this.closest('.media-item');
+                        console.log('Found media item element:', mediaItem);
+                        if (mediaItem) {
+                            mediaItem.remove();
+                            console.log('Media item removed from DOM');
+                        } else {
+                            console.warn('Media item element not found, reloading page');
+                            // Fallback: reload the page if element not found
+                            location.reload();
+                        }
                     } else {
                         alert('Delete failed: ' + data.message);
                     }
                 })
                 .catch(error => {
                     console.error('Delete error:', error);
-                    alert('Delete failed');
+                    alert('Delete failed: ' + error.message);
+                })
+                .finally(() => {
+                    // Restore button state
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
                 });
             }
         });
@@ -412,7 +497,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 fetch('/admin/media/regenerate-conversions', {
                     method: 'POST',
                     headers: {
-                        'X-CSRF-TOKEN': window.Laravel.csrfToken,
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
                         'Content-Type': 'application/json'
                     }
                 })
@@ -444,5 +529,6 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 @endpush
 @endsection
+
 
 
