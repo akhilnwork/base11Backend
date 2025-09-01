@@ -49,10 +49,56 @@
         0%, 100% { opacity: 1; }
         50% { opacity: 0.5; }
     }
+    
+    /* Loading state styles */
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+    
+    .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    /* Error state styles */
+    .error-message {
+        background-color: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+    }
 </style>
 @endpush
 
 @section('content')
+<!-- Loading Overlay -->
+<div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="text-center">
+        <div class="loading-spinner mx-auto mb-4"></div>
+        <p class="text-lg font-medium text-gray-700">Loading Media Library...</p>
+    </div>
+</div>
+
 <div class="space-y-6">
     <!-- Header -->
     <div class="flex justify-between items-center">
@@ -64,6 +110,9 @@
             Upload Files
         </button>
     </div>
+
+    <!-- Error Display -->
+    <div id="errorDisplay" class="error-message hidden"></div>
 
     <!-- Upload Area -->
     <div id="uploadArea" class="hidden">
@@ -116,13 +165,17 @@
                     </svg>
                     Regenerate All
                 </button>
-                
-
+                <button id="refreshBtn" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm">
+                    <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Refresh
+                </button>
             </div>
             
             <!-- Stats -->
             <div class="text-sm text-gray-500">
-                {{ $media->total() }} files total
+                <span id="mediaCount">{{ $media->total() }}</span> files total
             </div>
         </div>
     </div>
@@ -204,205 +257,191 @@
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('Media Library initialized');
+    
+    // Utility functions
+    function showLoading() {
+        document.getElementById('loadingOverlay').classList.remove('hidden');
+    }
+    
+    function hideLoading() {
+        document.getElementById('loadingOverlay').classList.add('hidden');
+    }
+    
+    function showError(message) {
+        const errorDisplay = document.getElementById('errorDisplay');
+        errorDisplay.textContent = message;
+        errorDisplay.classList.remove('hidden');
+        setTimeout(() => {
+            errorDisplay.classList.add('hidden');
+        }, 5000);
+    }
+    
+    function hideError() {
+        document.getElementById('errorDisplay').classList.add('hidden');
+    }
+    
+    // Initialize page
+    hideLoading();
+    hideError();
+    
+    // Upload functionality
     const uploadBtn = document.getElementById('uploadBtn');
-    const uploadEmptyBtn = document.getElementById('uploadEmptyBtn');
     const uploadArea = document.getElementById('uploadArea');
-    const fileInput = document.getElementById('file-upload');
-    const dropzone = document.querySelector('.dropzone');
+    const fileUpload = document.getElementById('file-upload');
     const uploadProgress = document.getElementById('uploadProgress');
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
-    const selectAllBtn = document.getElementById('selectAllBtn');
-    const deselectAllBtn = document.getElementById('deselectAllBtn');
-    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
-    const mediaCheckboxes = document.querySelectorAll('.media-checkbox');
-    const regenerateBtn = document.getElementById('regenerateConversions');
-
-
-    // Toggle upload area
-    [uploadBtn, uploadEmptyBtn].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', function() {
-                uploadArea.classList.toggle('hidden');
-            });
-        }
-    });
-
-    // File input change
-    fileInput.addEventListener('change', function(e) {
-        if (e.target.files.length > 0) {
-            uploadFiles(e.target.files);
-        }
-    });
-
-    // Drag and drop
-    dropzone.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        dropzone.classList.add('dragover');
-    });
-
-    dropzone.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        dropzone.classList.remove('dragover');
-    });
-
-    dropzone.addEventListener('drop', function(e) {
-        e.preventDefault();
-        dropzone.classList.remove('dragover');
-        uploadFiles(e.dataTransfer.files);
-    });
-
-    // Upload files function
+    
+    if (uploadBtn) {
+        uploadBtn.addEventListener('click', function() {
+            uploadArea.classList.toggle('hidden');
+        });
+    }
+    
+    if (fileUpload) {
+        fileUpload.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                uploadFiles(e.target.files);
+            }
+        });
+    }
+    
     function uploadFiles(files) {
         const formData = new FormData();
+        for (let i = 0; i < files.length; i++) {
+            formData.append('files[]', files[i]);
+        }
         
-        Array.from(files).forEach(file => {
-            formData.append('files[]', file);
-        });
-
-        // Show progress
         uploadProgress.classList.remove('hidden');
         progressBar.style.width = '0%';
         progressText.textContent = '0%';
-
-        fetch('{{ route("admin.media.upload") }}', {
+        
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        if (!csrfToken) {
+            showError('Security token not found. Please refresh the page.');
+            return;
+        }
+        
+        fetch('/admin/media/upload', {
             method: 'POST',
             headers: {
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                'X-CSRF-TOKEN': csrfToken
             },
             body: formData
         })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                // Simulate progress for better UX
-                let progress = 0;
-                const interval = setInterval(() => {
-                    progress += 10;
-                    progressBar.style.width = progress + '%';
-                    progressText.textContent = progress + '%';
-                    
-                    if (progress >= 100) {
-                        clearInterval(interval);
-                        setTimeout(() => {
-                            uploadProgress.classList.add('hidden');
-                            location.reload(); // Refresh to show new files
-                        }, 500);
-                    }
-                }, 100);
+                showError('Upload successful! Refreshing page...');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
             } else {
-                alert('Upload failed: ' + data.message);
-                uploadProgress.classList.add('hidden');
+                showError('Upload failed: ' + data.message);
             }
         })
         .catch(error => {
             console.error('Upload error:', error);
-            alert('Upload failed');
+            showError('Upload failed: ' + error.message);
+        })
+        .finally(() => {
             uploadProgress.classList.add('hidden');
+            fileUpload.value = '';
         });
     }
-
-    // Selection management
-    function updateSelectionUI() {
-        const checked = document.querySelectorAll('.media-checkbox:checked');
-        if (checked.length > 0) {
-            selectAllBtn.classList.add('hidden');
-            deselectAllBtn.classList.remove('hidden');
-            deleteSelectedBtn.classList.remove('hidden');
-        } else {
-            selectAllBtn.classList.remove('hidden');
-            deselectAllBtn.classList.add('hidden');
-            deleteSelectedBtn.classList.add('hidden');
-        }
-    }
-
-    // Select all
-    selectAllBtn.addEventListener('click', function() {
-        mediaCheckboxes.forEach(checkbox => {
-            checkbox.checked = true;
-            checkbox.closest('.media-item').classList.add('selected');
-        });
-        updateSelectionUI();
-    });
-
-    // Deselect all
-    deselectAllBtn.addEventListener('click', function() {
-        mediaCheckboxes.forEach(checkbox => {
-            checkbox.checked = false;
-            checkbox.closest('.media-item').classList.remove('selected');
-        });
-        updateSelectionUI();
-    });
-
-    // Individual checkbox change
-    mediaCheckboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            if (this.checked) {
-                this.closest('.media-item').classList.add('selected');
-            } else {
-                this.closest('.media-item').classList.remove('selected');
-            }
+    
+    // Selection functionality
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const deselectAllBtn = document.getElementById('deselectAllBtn');
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    const mediaCheckboxes = document.querySelectorAll('.media-checkbox');
+    
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function() {
+            mediaCheckboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
             updateSelectionUI();
         });
-    });
-
-    // Delete selected
-    deleteSelectedBtn.addEventListener('click', function() {
-        const selected = Array.from(document.querySelectorAll('.media-checkbox:checked'));
-        if (selected.length === 0) return;
-
-                if (confirm(`Are you sure you want to delete ${selected.length} file(s)?`)) {
-            const mediaIds = selected.map(cb => cb.value);
+    }
+    
+    if (deselectAllBtn) {
+        deselectAllBtn.addEventListener('click', function() {
+            mediaCheckboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateSelectionUI();
+        });
+    }
+    
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', function() {
+            const selectedIds = Array.from(mediaCheckboxes)
+                .filter(checkbox => checkbox.checked)
+                .map(checkbox => checkbox.value);
             
-            // Get CSRF token
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-            if (!csrfToken) {
-                console.error('CSRF token not found');
-                alert('Security token not found. Please refresh the page.');
+            if (selectedIds.length === 0) {
+                showError('No files selected for deletion.');
                 return;
             }
             
-            // Show loading state
-            const button = this;
-            const originalText = button.textContent;
-            button.disabled = true;
-            button.textContent = 'Deleting...';
-            
-            fetch('{{ route("admin.media.batch-delete") }}', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken
-                },
-                body: JSON.stringify({
-                    media_ids: mediaIds
-                })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert('Delete failed: ' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Delete error:', error);
-                alert('Delete failed: ' + error.message);
-            })
-            .finally(() => {
-                // Restore button state
-                button.disabled = false;
-                button.textContent = originalText;
-            });
-        }
+            if (confirm(`Are you sure you want to delete ${selectedIds.length} selected file(s)?`)) {
+                deleteSelectedMedia(selectedIds);
+            }
+        });
+    }
+    
+    mediaCheckboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelectionUI);
     });
-
+    
+    function updateSelectionUI() {
+        const checkedBoxes = document.querySelectorAll('.media-checkbox:checked');
+        const hasSelection = checkedBoxes.length > 0;
+        
+        if (selectAllBtn) selectAllBtn.classList.toggle('hidden', hasSelection);
+        if (deselectAllBtn) deselectAllBtn.classList.toggle('hidden', !hasSelection);
+        if (deleteSelectedBtn) deleteSelectedBtn.classList.toggle('hidden', !hasSelection);
+    }
+    
+    function deleteSelectedMedia(mediaIds) {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        if (!csrfToken) {
+            showError('Security token not found. Please refresh the page.');
+            return;
+        }
+        
+        showLoading();
+        
+        fetch('/admin/media/batch-delete', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ media_ids: mediaIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showError('Files deleted successfully! Refreshing page...');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                showError('Delete failed: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Batch delete error:', error);
+            showError('Delete failed: ' + error.message);
+        })
+        .finally(() => {
+            hideLoading();
+        });
+    }
+    
     // Individual delete buttons
     document.querySelectorAll('.delete-media').forEach(btn => {
         btn.addEventListener('click', function(e) {
@@ -412,15 +451,12 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('Delete button clicked for media ID:', mediaId);
             
             if (confirm('Are you sure you want to delete this file?')) {
-                // Get CSRF token
                 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
                 if (!csrfToken) {
-                    console.error('CSRF token not found');
-                    alert('Security token not found. Please refresh the page.');
+                    showError('Security token not found. Please refresh the page.');
                     return;
                 }
                 
-                // Show loading state
                 const button = this;
                 const originalHTML = button.innerHTML;
                 button.disabled = true;
@@ -430,8 +466,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     </svg>
                 `;
                 
-                console.log('Sending delete request for media ID:', mediaId);
-                
                 fetch(`/admin/media/${mediaId}`, {
                     method: 'DELETE',
                     headers: {
@@ -439,53 +473,44 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 })
                 .then(response => {
-                    console.log('Delete response status:', response.status);
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     return response.json();
                 })
                 .then(data => {
-                    console.log('Delete response data:', data);
                     if (data.success) {
                         const mediaItem = this.closest('.media-item');
-                        console.log('Found media item element:', mediaItem);
                         if (mediaItem) {
                             mediaItem.remove();
-                            console.log('Media item removed from DOM');
+                            updateMediaCount();
                         } else {
-                            console.warn('Media item element not found, reloading page');
-                            // Fallback: reload the page if element not found
-                            location.reload();
+                            window.location.reload();
                         }
                     } else {
-                        alert('Delete failed: ' + data.message);
+                        showError('Delete failed: ' + data.message);
                     }
                 })
                 .catch(error => {
                     console.error('Delete error:', error);
-                    alert('Delete failed: ' + error.message);
+                    showError('Delete failed: ' + error.message);
                 })
                 .finally(() => {
-                    // Restore button state
                     button.disabled = false;
                     button.innerHTML = originalHTML;
                 });
             }
         });
     });
-
-
-
     
     // Regenerate conversions
+    const regenerateBtn = document.getElementById('regenerateConversions');
     if (regenerateBtn) {
         regenerateBtn.addEventListener('click', function() {
             if (confirm('Are you sure you want to regenerate all image conversions? This may take a while.')) {
                 const button = this;
                 const originalText = button.innerHTML;
                 
-                // Show loading state
                 button.disabled = true;
                 button.innerHTML = `
                     <svg class="w-4 h-4 inline mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -494,36 +519,65 @@ document.addEventListener('DOMContentLoaded', function() {
                     Processing...
                 `;
                 
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                if (!csrfToken) {
+                    showError('Security token not found. Please refresh the page.');
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                    return;
+                }
+                
                 fetch('/admin/media/regenerate-conversions', {
                     method: 'POST',
                     headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                        'X-CSRF-TOKEN': csrfToken,
                         'Content-Type': 'application/json'
                     }
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        alert(`Regeneration started! ${data.count} files queued for processing.`);
-                        // Reload page after a short delay
+                        showError(`Regeneration started! ${data.count} files queued for processing.`);
                         setTimeout(() => {
                             window.location.reload();
                         }, 2000);
                     } else {
-                        alert('Regeneration failed: ' + (data.message || 'Unknown error'));
+                        showError('Regeneration failed: ' + (data.message || 'Unknown error'));
                     }
                 })
                 .catch(error => {
                     console.error('Regeneration error:', error);
-                    alert('Regeneration failed');
+                    showError('Regeneration failed');
                 })
                 .finally(() => {
-                    // Restore button state
                     button.disabled = false;
                     button.innerHTML = originalText;
                 });
             }
         });
+    }
+    
+    // Refresh button
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function() {
+            showLoading();
+            window.location.reload();
+        });
+    }
+    
+    // Update media count
+    function updateMediaCount() {
+        const mediaCount = document.getElementById('mediaCount');
+        const currentCount = parseInt(mediaCount.textContent);
+        mediaCount.textContent = Math.max(0, currentCount - 1);
+    }
+    
+    // Prevent infinite loops by adding a flag
+    let isInitialized = false;
+    if (!isInitialized) {
+        isInitialized = true;
+        console.log('Media Library initialization complete');
     }
 });
 </script>
