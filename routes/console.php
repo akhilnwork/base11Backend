@@ -109,3 +109,95 @@ Artisan::command('db:clean-all', function () {
     
     return 0;
 })->purpose('Clean all data from database tables');
+
+// VPS fix command
+Artisan::command('vps:fix', function () {
+    $this->info('🔧 Starting VPS Configuration Fix...');
+    
+    // Show current configuration
+    $this->info('📊 Current Configuration:');
+    $this->line('APP_URL: ' . config('app.url'));
+    $this->line('FILESYSTEM_DISK: ' . config('filesystems.default'));
+    $this->line('MEDIA_DISK: ' . config('media-library.disk_name'));
+    $this->line('DB_CONNECTION: ' . config('database.default'));
+    
+    $this->newLine();
+    $this->warn('⚠️  This will fix storage links, permissions, and clear caches!');
+    
+    if (!$this->confirm('Are you sure you want to continue?')) {
+        $this->error('❌ Fix cancelled.');
+        return 1;
+    }
+    
+    try {
+        // 1. Clear all caches
+        $this->info('1️⃣ Clearing caches...');
+        $this->call('cache:clear');
+        $this->call('config:clear');
+        $this->call('view:clear');
+        $this->call('route:clear');
+        $this->info('   ✅ Caches cleared');
+        
+        // 2. Fix storage link
+        $this->info('2️⃣ Fixing storage link...');
+        if (is_link(public_path('storage'))) {
+            unlink(public_path('storage'));
+            $this->info('   ✅ Old storage link removed');
+        }
+        
+        $this->call('storage:link');
+        $this->info('   ✅ Storage link created');
+        
+        // 3. Clear media library cache
+        $this->info('3️⃣ Clearing media library cache...');
+        try {
+            $this->call('media:clear');
+            $this->info('   ✅ Media library cache cleared');
+        } catch (\Exception $e) {
+            $this->warn('   ⚠️  Media clear command not available: ' . $e->getMessage());
+        }
+        
+        // 4. Test configuration
+        $this->info('4️⃣ Testing configuration...');
+        
+        // Test database connection
+        try {
+            \Illuminate\Support\Facades\DB::connection()->getPdo();
+            $this->info('   ✅ Database connection: OK');
+        } catch (\Exception $e) {
+            $this->error('   ❌ Database connection: FAILED - ' . $e->getMessage());
+        }
+        
+        // Test storage
+        try {
+            $testFile = storage_path('app/public/test.txt');
+            file_put_contents($testFile, 'test');
+            unlink($testFile);
+            $this->info('   ✅ Storage: OK');
+        } catch (\Exception $e) {
+            $this->error('   ❌ Storage: FAILED - ' . $e->getMessage());
+        }
+        
+        $this->newLine();
+        $this->info('🎉 VPS Configuration Fix Completed!');
+        
+        $this->newLine();
+        $this->info('📋 Next Steps:');
+        $this->line('1. Update your .env file with APP_URL=https://cms.thebase11.com');
+        $this->line('2. Set FILESYSTEM_DISK=public');
+        $this->line('3. Set MEDIA_DISK=public');
+        $this->line('4. Restart your web server');
+        $this->line('5. Clear browser cache and test');
+        
+        $this->newLine();
+        $this->info('🔗 Test URLs:');
+        $this->line('Storage: ' . config('app.url') . '/storage');
+        $this->line('Media: ' . config('app.url') . '/storage/media-library');
+        
+    } catch (\Exception $e) {
+        $this->error('❌ Error during fix: ' . $e->getMessage());
+        return 1;
+    }
+    
+    return 0;
+})->purpose('Fix VPS configuration issues');
