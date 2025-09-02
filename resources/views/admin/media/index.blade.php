@@ -165,6 +165,12 @@
                     </svg>
                     Regenerate All
                 </button>
+                <button id="cleanupOrphaned" class="bg-orange-600 text-white px-4 py-2 rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 text-sm">
+                    <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    Cleanup Orphaned
+                </button>
                 <button id="refreshBtn" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm">
                     <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -190,8 +196,9 @@
                             @if(str_starts_with($item->mime_type, 'image/'))
                                 <img src="{{ $item->hasGeneratedConversion('thumb') ? $item->getUrl('thumb') : $item->getUrl() }}" 
                                      alt="{{ $item->name }}" 
-                                     class="w-full h-48 object-cover"
-                                     onerror="this.src='{{ $item->getUrl() }}'">
+                                     class="w-full h-48 object-cover media-image"
+                                     data-media-id="{{ $item->id }}"
+                                     onerror="showImagePlaceholder(this)">
                             @else
                                 <div class="w-full h-48 flex items-center justify-center bg-gray-100">
                                     <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -216,8 +223,23 @@
                         </div>
                         
                         <div class="p-3">
-                            <div class="text-sm font-medium text-gray-900 truncate" title="{{ $item->name }}">
-                                {{ $item->name }}
+                            <div class="flex items-center justify-between">
+                                <div class="text-sm font-medium text-gray-900 truncate" title="{{ $item->name }}">
+                                    {{ $item->name }}
+                                </div>
+                                @php
+                                    $fileExists = true;
+                                    try {
+                                        $fileExists = file_exists($item->getPath());
+                                    } catch (\Exception $e) {
+                                        $fileExists = false;
+                                    }
+                                @endphp
+                                @if(!$fileExists)
+                                    <span class="flex-shrink-0 ml-2 px-1.5 py-0.5 text-xs font-medium bg-red-100 text-red-800 rounded-full" title="File not found on disk">
+                                        Missing
+                                    </span>
+                                @endif
                             </div>
                             <div class="text-xs text-gray-500 mt-1">
                                 {{ strtoupper(pathinfo($item->file_name, PATHINFO_EXTENSION)) }} • {{ number_format($item->size / 1024, 1) }} KB
@@ -318,7 +340,11 @@ document.addEventListener('DOMContentLoaded', function() {
         progressText.textContent = '0%';
         
         const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        console.log('CSRF Token found:', csrfToken ? 'Yes' : 'No');
+        console.log('CSRF Token length:', csrfToken?.length || 0);
+        
         if (!csrfToken) {
+            console.error('CSRF token meta tag not found in page head');
             showError('Security token not found. Please refresh the page.');
             return;
         }
@@ -330,7 +356,45 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: formData
         })
-        .then(response => response.json())
+        .then(response => {
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers);
+            
+            // Check if the response is actually JSON
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                console.error('Response is not JSON. Content-Type:', contentType);
+                return response.text().then(text => {
+                    console.error('Response body:', text);
+                    
+                    // Check if it's an authentication redirect
+                    if (response.status === 302 || text.includes('<!DOCTYPE') || text.includes('<html')) {
+                        if (response.status === 302 || text.includes('login')) {
+                            throw new Error('Session expired. Please refresh the page and log in again.');
+                        }
+                        throw new Error('Server returned HTML instead of JSON. Check server logs for errors.');
+                    }
+                    
+                    throw new Error(`Server error: ${response.status} - ${text}`);
+                });
+            }
+            
+            if (!response.ok) {
+                return response.json().then(data => {
+                    if (response.status === 401) {
+                        throw new Error('Session expired. Please refresh the page and log in again.');
+                    } else if (response.status === 403) {
+                        throw new Error('Access denied. You do not have permission to upload files.');
+                    } else if (response.status === 422) {
+                        throw new Error(data.message || 'Validation error');
+                    } else {
+                        throw new Error(data.message || `HTTP error! status: ${response.status}`);
+                    }
+                });
+            }
+            
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 showError('Upload successful! Refreshing page...');
@@ -557,6 +621,67 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Cleanup orphaned button
+    const cleanupOrphanedBtn = document.getElementById('cleanupOrphaned');
+    if (cleanupOrphanedBtn) {
+        cleanupOrphanedBtn.addEventListener('click', function() {
+            if (!confirm('This will remove database entries for media files that no longer exist on disk. Are you sure you want to continue?')) {
+                return;
+            }
+            
+            const button = this;
+            const originalText = button.innerHTML;
+            
+            button.disabled = true;
+            button.innerHTML = `
+                <svg class="w-4 h-4 inline mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Cleaning up...
+            `;
+            
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            if (!csrfToken) {
+                showError('Security token not found. Please refresh the page.');
+                button.disabled = false;
+                button.innerHTML = originalText;
+                return;
+            }
+            
+            fetch('/admin/media/cleanup-orphaned', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    showError(`Cleanup completed! ${data.message}`);
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    showError('Cleanup failed: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Cleanup error:', error);
+                showError('Cleanup failed: ' + error.message);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            });
+        });
+    }
+    
     // Refresh button
     const refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
@@ -580,6 +705,33 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('Media Library initialization complete');
     }
 });
+
+// Global function to handle image loading errors
+function showImagePlaceholder(img) {
+    const mediaId = img.getAttribute('data-media-id');
+    const alt = img.getAttribute('alt') || 'Image not available';
+    
+    console.log('Image failed to load for media ID:', mediaId, 'Alt:', alt);
+    
+    // Create a placeholder div to replace the broken image
+    const placeholder = document.createElement('div');
+    placeholder.className = 'w-full h-48 flex flex-col items-center justify-center bg-gray-100 border-2 border-dashed border-gray-300';
+    placeholder.innerHTML = `
+        <svg class="w-12 h-12 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+        <div class="text-xs text-gray-500 text-center px-2">
+            <div class="font-medium">Image not found</div>
+            <div class="text-gray-400 mt-1">File may be missing or corrupted</div>
+        </div>
+    `;
+    
+    // Replace the image with the placeholder
+    img.parentNode.replaceChild(placeholder, img);
+    
+    // Log this event for debugging
+    console.warn('Replaced broken image with placeholder for media ID:', mediaId);
+}
 </script>
 @endpush
 @endsection

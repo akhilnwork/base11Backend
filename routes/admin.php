@@ -25,6 +25,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::delete('media/{media}', [MediaLibraryController::class, 'destroy'])->name('media.destroy');
     Route::post('media/batch-delete', [MediaLibraryController::class, 'batchDelete'])->name('media.batch-delete');
     Route::post('media/regenerate-conversions', [MediaLibraryController::class, 'regenerateConversions'])->name('media.regenerate-conversions');
+    Route::post('media/cleanup-orphaned', [MediaLibraryController::class, 'cleanupOrphaned'])->name('media.cleanup-orphaned');
     Route::get('media/picker', [MediaLibraryController::class, 'picker'])->name('media.picker');
     
     // About Slides

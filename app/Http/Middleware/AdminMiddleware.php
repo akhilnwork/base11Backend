@@ -16,13 +16,16 @@ class AdminMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         if (!auth()->check()) {
+            if ($request->wantsJson() || $request->expectsJson()) {
+                return response()->json(['message' => 'Unauthenticated. Please log in.'], 401);
+            }
             return redirect()->route('login');
         }
 
         $user = auth()->user();
         
         if (!$user->isAdmin() && !$user->isAgent()) {
-            if ($request->wantsJson()) {
+            if ($request->wantsJson() || $request->expectsJson()) {
                 return response()->json(['message' => 'Access denied. Admin or Agent role required.'], 403);
             }
             abort(403, 'Access denied. Admin or Agent role required.');

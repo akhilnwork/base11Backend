@@ -31,19 +31,38 @@ class MediaLibraryController extends Controller
      */
     public function upload(Request $request): JsonResponse
     {
-        $request->validate([
-            'files.*' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB max
-        ]);
-
         try {
+            // Log the request details for debugging
+            \Log::info('Media upload request received', [
+                'user_id' => auth()->id(),
+                'files_count' => $request->hasFile('files') ? count($request->file('files')) : 0,
+                'csrf_token_present' => $request->header('X-CSRF-TOKEN') ? 'yes' : 'no',
+                'content_type' => $request->header('Content-Type'),
+            ]);
+
+            $request->validate([
+                'files.*' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB max
+            ]);
+
             $uploadedMedia = [];
             
             if ($request->hasFile('files')) {
                 foreach ($request->file('files') as $file) {
+                    \Log::info('Processing file upload', [
+                        'original_name' => $file->getClientOriginalName(),
+                        'size' => $file->getSize(),
+                        'mime_type' => $file->getMimeType(),
+                    ]);
+                    
                     $media = $this->mediaService->uploadFile($file);
                     $uploadedMedia[] = $this->formatMediaResponse($media);
                 }
             }
+
+            \Log::info('Media upload completed successfully', [
+                'uploaded_count' => count($uploadedMedia),
+                'user_id' => auth()->id(),
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -51,7 +70,26 @@ class MediaLibraryController extends Controller
                 'media' => $uploadedMedia,
             ]);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Log::warning('Media upload validation failed', [
+                'errors' => $e->errors(),
+                'user_id' => auth()->id(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed: ' . implode(', ', array_merge(...$e->errors())),
+            ], 422);
+            
         } catch (\Exception $e) {
+            \Log::error('Media upload failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Upload failed: ' . $e->getMessage(),
@@ -124,6 +162,17 @@ class MediaLibraryController extends Controller
      */
     private function formatMediaResponse(Media $media): array
     {
+        // Check if the physical file exists
+        $fileExists = false;
+        try {
+            $fileExists = file_exists($media->getPath());
+        } catch (\Exception $e) {
+            \Log::warning('Could not check file existence for media', [
+                'media_id' => $media->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return [
             'id' => $media->id,
             'name' => $media->name,
@@ -133,6 +182,7 @@ class MediaLibraryController extends Controller
             'url' => $media->getUrl(),
             'thumb_url' => $media->hasGeneratedConversion('thumb') ? $media->getUrl('thumb') : $media->getUrl(),
             'medium_url' => $media->hasGeneratedConversion('medium') ? $media->getUrl('medium') : $media->getUrl(),
+            'file_exists' => $fileExists,
             'created_at' => $media->created_at->toISOString(),
         ];
     }
@@ -167,6 +217,57 @@ class MediaLibraryController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Regeneration failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Clean up orphaned media records (database entries without files)
+     */
+    public function cleanupOrphaned(): JsonResponse
+    {
+        try {
+            $orphanedMedia = [];
+            $mediaItems = Media::all();
+            
+            foreach ($mediaItems as $media) {
+                try {
+                    if (!file_exists($media->getPath())) {
+                        $orphanedMedia[] = $media;
+                    }
+                } catch (\Exception $e) {
+                    // If we can't get the path, consider it orphaned
+                    $orphanedMedia[] = $media;
+                }
+            }
+            
+            $deletedCount = 0;
+            foreach ($orphanedMedia as $media) {
+                \Log::info('Deleting orphaned media record', [
+                    'media_id' => $media->id,
+                    'file_name' => $media->file_name,
+                    'path' => $media->getPath() ?? 'unknown',
+                ]);
+                
+                $media->delete();
+                $deletedCount++;
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Cleanup completed. Removed {$deletedCount} orphaned media records.",
+                'deleted_count' => $deletedCount,
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Media cleanup failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Cleanup failed: ' . $e->getMessage(),
             ], 500);
         }
     }
