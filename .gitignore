@@ -24,7 +24,7 @@ Homestead.yaml
 Thumbs.db
 
 # Database files
-/database/database.sqlite
-*.sqlite
-*.sqlite3
-*.db
+# /database/database.sqlite
+# *.sqlite
+# *.sqlite3
+# *.db
