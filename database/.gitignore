@@ -1,0 +1,15 @@
+# Ignore SQLite databases and related files
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.db
+*.db3
+
+# Keep migrations, factories, and seeders tracked
+!migrations/
+!factories/
+!seeders/
+
+

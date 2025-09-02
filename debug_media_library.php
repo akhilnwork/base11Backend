@@ -60,13 +60,23 @@ try {
         echo "❌ Storage directory: MISSING\n";
     }
     
+    $storageReal = realpath($storagePath) ?: $storagePath;
+    $publicReal = realpath($publicPath) ?: $publicPath;
+
     if (is_link($publicPath)) {
-        echo "✅ Storage link: EXISTS\n";
-        $linkTarget = readlink($publicPath);
-        echo "🔗 Link target: {$linkTarget}\n";
+        echo "✅ Storage link: EXISTS (symlink)\n";
+        $linkTarget = @readlink($publicPath);
+        if ($linkTarget !== false) {
+            echo "🔗 Link target: {$linkTarget}\n";
+        }
+    } elseif (strncasecmp(PHP_OS, 'WIN', 3) === 0 && is_dir($publicPath) && $publicReal === $storageReal) {
+        echo "✅ Storage link: EXISTS (junction)\n";
     } else {
         echo "❌ Storage link: MISSING\n";
     }
+
+    echo "Resolved storage path: {$storageReal}\n";
+    echo "Resolved public storage path: {$publicReal}\n";
     
 } catch (\Exception $e) {
     echo "❌ Storage check failed: " . $e->getMessage() . "\n";
